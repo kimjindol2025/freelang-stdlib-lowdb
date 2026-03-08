@@ -1,0 +1,286 @@
+/**
+ * FreeLang v2 stdlib — lowdb.fl
+ *
+ * npm lowdb 완전 대체 (외부 npm 0개)
+ * JSON 파일 기반 경량 로컬 DB
+ *
+ * path 문법:
+ *   "users"           → 최상위 키
+ *   "users.0.name"    → 배열 인덱스 + 중첩 키
+ *   "settings.theme"  → 중첩 객체 키
+ *   "stats.count"     → 숫자 값 경로
+ *
+ * 사용 예시:
+ *   import "lowdb"
+ *
+ *   // 기본 데이터 포함 초기화
+ *   var db = create("db.json", { users: [], posts: [] })
+ *
+ *   // 데이터 추가
+ *   push(db, "users", { id: 1, name: "김철수", age: 30 })
+ *   push(db, "users", { id: 2, name: "이영희", age: 25 })
+ *
+ *   // 조회
+ *   var users = get(db, "users")
+ *   var name  = get(db, "users.0.name")
+ *
+ *   // 수정
+ *   set(db, "users.0.name", "박민준")
+ *
+ *   // 검색
+ *   var user = find(db, "users", fn(u) { return u.id == 1 })
+ *   var list = filter(db, "users", fn(u) { return u.age > 20 })
+ *
+ *   // 삭제
+ *   remove(db, "users.0")
+ *
+ *   // 파일 저장/읽기
+ *   write(db)
+ *   read(db)
+ *
+ * 네이티브 함수 (src/stdlib-lowdb.ts):
+ *   lowdb_create(filePath, defaultJson)  → dbId: string
+ *   lowdb_get(dbId, path)                → any
+ *   lowdb_set(dbId, path, valueJson)     → void
+ *   lowdb_push(dbId, path, valueJson)    → void
+ *   lowdb_remove(dbId, path)             → void
+ *   lowdb_has(dbId, path)                → bool
+ *   lowdb_write(dbId)                    → void
+ *   lowdb_read(dbId)                     → void
+ *   lowdb_keys(dbId, path)               → string[]
+ *   lowdb_size(dbId, path)               → int
+ *   lowdb_find(dbId, path, key, value)   → any
+ *   lowdb_filter(dbId, path, key, value) → any[]
+ */
+
+// ============================================
+// DB 핸들 구조체
+// ============================================
+
+struct LowDB {
+  id: string,          // 내부 레지스트리 ID
+  filePath: string,    // JSON 파일 경로
+  autoWrite: bool      // true = 변경 시 자동 저장
+}
+
+// ============================================
+// create — DB 초기화
+//
+// 파일이 있으면 로드, 없으면 defaultData로 생성
+//
+// 예시:
+//   var db = create("db.json")
+//   var db = create("db.json", { users: [], count: 0 })
+// ============================================
+
+fn create(filePath: string) -> LowDB {
+  let id = lowdb_create(filePath, "{}")
+  return {
+    id: id,
+    filePath: filePath,
+    autoWrite: false
+  }
+}
+
+fn createWithDefault(filePath: string, defaultData: any) -> LowDB {
+  let defaultJson = jsonstringify(defaultData)
+  let id = lowdb_create(filePath, defaultJson)
+  return {
+    id: id,
+    filePath: filePath,
+    autoWrite: false
+  }
+}
+
+// ============================================
+// get — 경로로 값 조회
+//
+// "users"        → users 배열 전체
+// "users.0"      → 첫 번째 사용자 객체
+// "users.0.name" → 이름 문자열
+// ""             → 전체 DB 객체
+// ============================================
+
+fn get(db: LowDB, path: string) -> any {
+  return lowdb_get(db.id, path)
+}
+
+// ============================================
+// set — 경로에 값 저장
+//
+// "users.0.name" + "박민준"
+// "settings.theme" + "dark"
+// "count" + 42
+// ============================================
+
+fn set(db: LowDB, path: string, value: any) -> void {
+  let valueJson = jsonstringify(value)
+  lowdb_set(db.id, path, valueJson)
+  if (db.autoWrite) {
+    lowdb_write(db.id)
+  }
+}
+
+// ============================================
+// push — 배열에 항목 추가 (append)
+//
+// push(db, "users", { id: 3, name: "홍길동" })
+// ============================================
+
+fn push(db: LowDB, path: string, value: any) -> void {
+  let valueJson = jsonstringify(value)
+  lowdb_push(db.id, path, valueJson)
+  if (db.autoWrite) {
+    lowdb_write(db.id)
+  }
+}
+
+// ============================================
+// remove — 경로의 값/항목 삭제
+//
+// remove(db, "users.0")      → 첫 번째 항목 삭제
+// remove(db, "settings.key") → 키 삭제
+// ============================================
+
+fn remove(db: LowDB, path: string) -> void {
+  lowdb_remove(db.id, path)
+  if (db.autoWrite) {
+    lowdb_write(db.id)
+  }
+}
+
+// ============================================
+// has — 경로 존재 여부 확인
+//
+// has(db, "users")   → true / false
+// has(db, "users.5") → false (인덱스 초과)
+// ============================================
+
+fn has(db: LowDB, path: string) -> bool {
+  return lowdb_has(db.id, path)
+}
+
+// ============================================
+// find — 배열에서 조건 일치 첫 항목 반환
+//
+// FreeLang에서 콜백은 네이티브 레이어로 전달 불가
+// → key/value 매칭 방식 사용
+//
+// find(db, "users", "id", 1)      → { id:1, name:"김철수" }
+// find(db, "users", "name", "이영희") → { ... }
+// ============================================
+
+fn find(db: LowDB, path: string, key: string, value: any) -> any {
+  let valueJson = jsonstringify(value)
+  return lowdb_find(db.id, path, key, valueJson)
+}
+
+// ============================================
+// filter — 배열에서 조건 일치 항목 모두 반환
+//
+// filter(db, "users", "active", true) → [...]
+// filter(db, "posts", "tag", "news")  → [...]
+// ============================================
+
+fn filter(db: LowDB, path: string, key: string, value: any) -> array {
+  let valueJson = jsonstringify(value)
+  return lowdb_filter(db.id, path, key, valueJson)
+}
+
+// ============================================
+// write — 현재 데이터를 파일에 저장
+// ============================================
+
+fn write(db: LowDB) -> void {
+  lowdb_write(db.id)
+}
+
+// ============================================
+// read — 파일에서 데이터를 다시 로드
+// ============================================
+
+fn read(db: LowDB) -> void {
+  lowdb_read(db.id)
+}
+
+// ============================================
+// keys — 경로의 키 목록 반환
+//
+// keys(db, "")         → ["users", "posts", "settings"]
+// keys(db, "users.0")  → ["id", "name", "age"]
+// ============================================
+
+fn keys(db: LowDB, path: string) -> array {
+  return lowdb_keys(db.id, path)
+}
+
+// ============================================
+// size — 배열/객체 크기 반환
+//
+// size(db, "users")  → 3
+// size(db, "")       → 2  (최상위 키 수)
+// ============================================
+
+fn size(db: LowDB, path: string) -> int {
+  return lowdb_size(db.id, path)
+}
+
+// ============================================
+// setAutoWrite — 변경 시 자동 파일 저장
+// ============================================
+
+fn setAutoWrite(db: LowDB, enabled: bool) -> LowDB {
+  db.autoWrite = enabled
+  return db
+}
+
+// ============================================
+// update — 배열 항목 인플레이스 수정
+//
+// update(db, "users", "id", 1, { name: "수정된이름" })
+// → id == 1 인 항목을 병합 업데이트
+// ============================================
+
+fn update(db: LowDB, path: string, key: string, keyValue: any, patch: any) -> void {
+  let keyJson   = jsonstringify(keyValue)
+  let patchJson = jsonstringify(patch)
+  lowdb_update(db.id, path, key, keyJson, patchJson)
+  if (db.autoWrite) {
+    lowdb_write(db.id)
+  }
+}
+
+// ============================================
+// upsert — 있으면 업데이트, 없으면 추가
+//
+// upsert(db, "users", "id", 1, { id:1, name:"김철수" })
+// ============================================
+
+fn upsert(db: LowDB, path: string, key: string, keyValue: any, data: any) -> void {
+  let existing = find(db, path, key, keyValue)
+  if (existing != null) {
+    update(db, path, key, keyValue, data)
+  } else {
+    push(db, path, data)
+  }
+}
+
+// ============================================
+// dump — 현재 DB 전체를 JSON 문자열로 반환
+// ============================================
+
+fn dump(db: LowDB) -> string {
+  let all = get(db, "")
+  return jsonstringify(all)
+}
+
+// ============================================
+// count — filter 결과 수 반환
+//
+// count(db, "users", "active", true) → 5
+// ============================================
+
+fn count(db: LowDB, path: string, key: string, value: any) -> int {
+  let result = filter(db, path, key, value)
+  return arr.length(result)
+}
